@@ -43,6 +43,8 @@ TEXTS = {
     "no_edit": "✏️ Yo‘q, tahrirlash",
     "submission_success": "✅ Rahmat! Sizning arizangiz yuborildi.",
     "restart_button": "♻️ Botni qayta ishga tushirish",
-    "stop_button": "🛑 Botni to‘xtatish"
+    "stop_button": "🛑 Botni to‘xtatish",
+    "restart_prompt": "Yana bir ariza yuborish uchun quyidagi tugmani bosing:",
+    "restart_fullname": "🔁 Keling, qaytadan boshlaymiz. Iltimos, to‘liq ismingizni kiriting:"
 
 }
