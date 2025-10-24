@@ -10,23 +10,9 @@ import os
 from datetime import datetime
 from texts_uz import TEXTS
 from states import CandidateForm
-from database import init_db, save_candidate
+from database import init_db, save_candidate, get_next_candidate_id  # ✅ updated import
 
 router = Router()
-
-# 🔹 Utility: ID generator
-def get_next_candidate_id():
-    counter_file = "candidate_counter.txt"
-    if not os.path.exists(counter_file):
-        with open(counter_file, "w") as f:
-            f.write("0")
-    with open(counter_file, "r+") as f:
-        last_id = int(f.read().strip())
-        new_id = last_id + 1
-        f.seek(0)
-        f.write(str(new_id))
-        f.truncate()
-    return f"C-{new_id:03d}"
 
 
 # 🔹 Create main menu keyboard
@@ -58,6 +44,7 @@ async def ask_full_name(message: Message, state: FSMContext):
 
 @router.message(CandidateForm.full_name)
 async def get_full_name(message: Message, state: FSMContext):
+    # ✅ Use new DB-based candidate ID generator
     candidate_id = get_next_candidate_id()
     await state.update_data(full_name=message.text, candidate_id=candidate_id)
     await message.answer(TEXTS["enter_birth_date"])
@@ -69,30 +56,24 @@ async def get_full_name(message: Message, state: FSMContext):
 async def get_birth_date(message: Message, state: FSMContext):
     date_text = message.text.strip()
 
-    # ✅ Validate format (dd.mm.yyyy)
     try:
         birth_date = datetime.strptime(date_text, "%d.%m.%Y")
     except ValueError:
         await message.answer("❗ Iltimos, tug‘ilgan sanani to‘g‘ri formatda kiriting (masalan: 10.12.2000).")
         return
 
-    # ✅ Calculate age
     today = datetime.today()
     age = today.year - birth_date.year - (
         (today.month, today.day) < (birth_date.month, birth_date.day)
     )
 
-    # ✅ Check age range
     if age < 16 or age > 70:
         await message.answer("⚠️ Iltimos, haqiqiy yosh kiriting (16 yoshdan kichik yoki 70 yoshdan katta bo‘lmasin).")
         return
 
-    # ✅ Save valid date & age
     await state.update_data(birth_date=date_text, age=age)
-
     await message.answer(TEXTS["enter_address"])
     await state.set_state(CandidateForm.address)
-
 
 
 # 🔹 Step 3: Address
@@ -190,10 +171,10 @@ async def get_phone_number(message: Message, state: FSMContext):
 @router.message(CandidateForm.confirmation, F.text == TEXTS["yes_submit"])
 async def confirm_submission(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    #Sent Candidate Data to Telegram Channel
     backlog_chat_id = os.getenv("BACKLOG_CHAT_ID")
-    #Save Candidate Data to DB
-    save_candidate(data)
+
+    save_candidate(data)  # ✅ still saves to DB
+
     backlog_message = (
         f"📥 *Yangi nomzod arizasi*\n\n"
         f"🆔 *ID:* {data['candidate_id']}\n"
@@ -238,7 +219,7 @@ async def handle_restart(message: Message, state: FSMContext):
 stopped_users = set()
 
 
-# 🔹 Stop button action (fixed)
+# 🔹 Stop button action
 @router.message(F.text == TEXTS["stop_button"])
 async def handle_stop(message: Message, state: FSMContext):
     await state.clear()
@@ -250,5 +231,4 @@ async def handle_stop(message: Message, state: FSMContext):
 @router.message()
 async def block_stopped_users(message: Message):
     if message.from_user.id in stopped_users:
-        # Ignore all messages silently
         return

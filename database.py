@@ -6,67 +6,59 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL")  # must be set in Railway env variables
-if not DATABASE_URL:
-    logger.error("DATABASE_URL is not set. Please configure your Postgres DATABASE_URL env var.")
-    # We still allow import but operations will fail later with clear error.
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 def init_db():
-    """Create candidates table in Postgres (id SERIAL PRIMARY KEY)."""
+    """Create candidates table in Postgres."""
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL not configured. init_db cannot proceed.")
+        raise RuntimeError("DATABASE_URL not configured.")
 
-    try:
-        import psycopg2
-        from psycopg2.extras import execute_values
-    except ImportError as e:
-        raise RuntimeError("psycopg2 not installed. Add psycopg2-binary to requirements.") from e
+    import psycopg2
+    conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS candidates (
+            id SERIAL PRIMARY KEY,
+            candidate_id TEXT,
+            full_name TEXT,
+            birth_date TEXT,
+            age INTEGER,
+            address TEXT,
+            job_type TEXT,
+            extra_skills TEXT,
+            phone_number TEXT,
+            telegram_username TEXT,
+            last_workplace_voice_id TEXT,
+            created_at TIMESTAMP
+        );
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+    logger.info("✅ Database initialized successfully.")
 
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS candidates (
-                id SERIAL PRIMARY KEY,
-                candidate_id TEXT,
-                full_name TEXT,
-                birth_date TEXT,
-                age INTEGER,
-                address TEXT,
-                job_type TEXT,
-                extra_skills TEXT,
-                phone_number TEXT,
-                telegram_username TEXT,
-                last_workplace_voice_id TEXT,
-                created_at TIMESTAMP
-            );
-        """)
-        conn.commit()
-        cur.close()
-        logger.info("✅ Postgres: candidates table is ready.")
-    except Exception as e:
-        logger.exception("Failed to initialize Postgres DB: %s", e)
-        raise
-    finally:
-        if conn:
-            conn.close()
+
+def get_next_candidate_id():
+    """Generate next candidate ID based on current max(id) in DB."""
+    import psycopg2
+    conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
+    cur = conn.cursor()
+    cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM candidates;")
+    next_num = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return f"C-{next_num:03d}"
+
 
 def save_candidate(data: dict):
-    """Insert a candidate row into Postgres."""
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL not configured. save_candidate cannot proceed.")
-
-    try:
-        import psycopg2
-    except ImportError as e:
-        raise RuntimeError("psycopg2 not installed. Add psycopg2-binary to requirements.") from e
-
+    """Insert candidate data into Postgres."""
+    import psycopg2
     insert_sql = """
         INSERT INTO candidates (
             candidate_id, full_name, birth_date, age, address, job_type,
             extra_skills, phone_number, telegram_username, last_workplace_voice_id, created_at
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """
     values = (
         data.get("candidate_id"),
@@ -82,17 +74,10 @@ def save_candidate(data: dict):
         datetime.now()
     )
 
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
-        cur = conn.cursor()
-        cur.execute(insert_sql, values)
-        conn.commit()
-        cur.close()
-        logger.info("✅ Saved candidate %s", data.get("candidate_id"))
-    except Exception as e:
-        logger.exception("Failed to save candidate: %s", e)
-        raise
-    finally:
-        if conn:
-            conn.close()
+    conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
+    cur = conn.cursor()
+    cur.execute(insert_sql, values)
+    conn.commit()
+    cur.close()
+    conn.close()
+    logger.info("✅ Candidate %s saved.", data.get("candidate_id"))
