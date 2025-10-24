@@ -6,3 +6,4 @@ candidate_counter.txt
 __pycache__/
 .vscode/
 venv/
+candidates.db
