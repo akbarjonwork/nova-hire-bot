@@ -1,50 +1,34 @@
 # database.py
 import os
-import sqlite3
+import logging
 from datetime import datetime
 
-# Try Postgres first (DATABASE_URL), else use SQLite file
-DATABASE_URL = os.getenv("DATABASE_URL")  # e.g. postgres://user:pass@host:port/dbname
-DB_PATH = os.getenv("DATABASE_PATH", "candidates.db")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+DATABASE_URL = os.getenv("DATABASE_URL")  # must be set in Railway env variables
+if not DATABASE_URL:
+    logger.error("DATABASE_URL is not set. Please configure your Postgres DATABASE_URL env var.")
+    # We still allow import but operations will fail later with clear error.
 
 def init_db():
-    """Initialize DB. If DATABASE_URL present, create table in Postgres.
-       Otherwise create SQLite database file and table."""
-    if DATABASE_URL:
-        # create table in Postgres
-        try:
-            import psycopg2
-            conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
-            cur = conn.cursor()
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS candidates (
-                    id SERIAL PRIMARY KEY,
-                    candidate_id TEXT,
-                    full_name TEXT,
-                    birth_date TEXT,
-                    age INTEGER,
-                    address TEXT,
-                    job_type TEXT,
-                    extra_skills TEXT,
-                    phone_number TEXT,
-                    telegram_username TEXT,
-                    last_workplace_voice_id TEXT,
-                    created_at TIMESTAMP
-                )
-            """)
-            conn.commit()
-            cur.close()
-            conn.close()
-        except Exception:
-            raise
-    else:
-        # sqlite fallback
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
+    """Create candidates table in Postgres (id SERIAL PRIMARY KEY)."""
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL not configured. init_db cannot proceed.")
+
+    try:
+        import psycopg2
+        from psycopg2.extras import execute_values
+    except ImportError as e:
+        raise RuntimeError("psycopg2 not installed. Add psycopg2-binary to requirements.") from e
+
+    conn = None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
+        cur = conn.cursor()
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS candidates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 candidate_id TEXT,
                 full_name TEXT,
                 birth_date TEXT,
@@ -55,60 +39,60 @@ def init_db():
                 phone_number TEXT,
                 telegram_username TEXT,
                 last_workplace_voice_id TEXT,
-                created_at TEXT
-            )
+                created_at TIMESTAMP
+            );
         """)
         conn.commit()
-        conn.close()
-
+        cur.close()
+        logger.info("✅ Postgres: candidates table is ready.")
+    except Exception as e:
+        logger.exception("Failed to initialize Postgres DB: %s", e)
+        raise
+    finally:
+        if conn:
+            conn.close()
 
 def save_candidate(data: dict):
-    """Save candidate dict to the active DB (Postgres if configured, otherwise sqlite)."""
-    if DATABASE_URL:
+    """Insert a candidate row into Postgres."""
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL not configured. save_candidate cannot proceed.")
+
+    try:
         import psycopg2
+    except ImportError as e:
+        raise RuntimeError("psycopg2 not installed. Add psycopg2-binary to requirements.") from e
+
+    insert_sql = """
+        INSERT INTO candidates (
+            candidate_id, full_name, birth_date, age, address, job_type,
+            extra_skills, phone_number, telegram_username, last_workplace_voice_id, created_at
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    values = (
+        data.get("candidate_id"),
+        data.get("full_name"),
+        data.get("birth_date"),
+        data.get("age"),
+        data.get("address"),
+        data.get("job_type"),
+        data.get("extra_skills"),
+        data.get("phone_number"),
+        data.get("username"),
+        data.get("last_workplace_voice_id"),
+        datetime.now()
+    )
+
+    conn = None
+    try:
         conn = psycopg2.connect(DATABASE_URL, sslmode=os.getenv("PGSSLMODE", "require"))
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO candidates (
-                candidate_id, full_name, birth_date, age, address, job_type,
-                extra_skills, phone_number, telegram_username, last_workplace_voice_id, created_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        """, (
-            data.get("candidate_id"),
-            data.get("full_name"),
-            data.get("birth_date"),
-            data.get("age"),
-            data.get("address"),
-            data.get("job_type"),
-            data.get("extra_skills"),
-            data.get("phone_number"),
-            data.get("username"),
-            data.get("last_workplace_voice_id"),
-            datetime.now()
-        ))
+        cur.execute(insert_sql, values)
         conn.commit()
         cur.close()
-        conn.close()
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO candidates (
-                candidate_id, full_name, birth_date, age, address, job_type,
-                extra_skills, phone_number, telegram_username, last_workplace_voice_id, created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        """, (
-            data.get("candidate_id"),
-            data.get("full_name"),
-            data.get("birth_date"),
-            data.get("age"),
-            data.get("address"),
-            data.get("job_type"),
-            data.get("extra_skills"),
-            data.get("phone_number"),
-            data.get("username"),
-            data.get("last_workplace_voice_id"),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ))
-        conn.commit()
-        conn.close()
+        logger.info("✅ Saved candidate %s", data.get("candidate_id"))
+    except Exception as e:
+        logger.exception("Failed to save candidate: %s", e)
+        raise
+    finally:
+        if conn:
+            conn.close()
